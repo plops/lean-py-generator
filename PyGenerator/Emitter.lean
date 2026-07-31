@@ -25,6 +25,8 @@ partial def emitPy (code : SExpr) (cfg : EmitConfig := {}) : String :=
   let emit (c : SExpr) (dl : Nat := 0) : String :=
     emitPy c { cfg with level := cfg.level + dl }
 
+  let emitWithDl (c : SExpr) (dl : Nat) : String := emit c dl
+
   match code with
   | SExpr.sym s => s
   | SExpr.str s => parseAndEmitFString s cfg
@@ -53,10 +55,16 @@ partial def emitPy (code : SExpr) (cfg : EmitConfig := {}) : String :=
       s!"\{{String.intercalate ", " rendered}}"
     | "dict*" =>
       let kvs := groupPairs args
-      let rendered := kvs.map (fun (k, v) => s!"{emit k}={emit v}")
+      let rendered := kvs.map (fun (k, v) =>
+        let keyName := match k with
+          | SExpr.key s => s
+          | SExpr.sym s => if s.startsWith ":" then (s.drop 1).toString else s
+          | _ => emit k
+        s!"{keyName}={emit v}"
+      )
       s!"dict({String.intercalate ", " rendered})"
     | "indent" =>
-      let pad := String.mk (List.replicate (cfg.level * 4) ' ')
+      let pad := String.ofList (List.replicate (cfg.level * 4) ' ')
       match args with
       | [a] => s!"{pad}{emit a}"
       | _ => ""
@@ -89,7 +97,7 @@ partial def emitPy (code : SExpr) (cfg : EmitConfig := {}) : String :=
         let bodyStr := match body with | [b] => emit b | _ => ""
         s!"lambda {String.intercalate ", " params}: {bodyStr}"
       | _ => ""
-    | "def" => emitDefun (SExpr.list (head :: args)) emit
+    | "def" => emitDefun (SExpr.list (head :: args)) emitWithDl
     | "=" =>
       match args with
       | [a, b] => s!"{emit a} = {emit b}"
@@ -123,7 +131,7 @@ partial def emitPy (code : SExpr) (cfg : EmitConfig := {}) : String :=
     | "dot" => String.intercalate "." (args.map (emit ·))
     | "paren*" =>
       match args with
-      | [parentOp, arg] => emitParenStar parentOp arg .left cfg emit
+      | [parentOp, arg] => emitParenStar parentOp arg .left cfg emitWithDl
       | _ => ""
     | "not" =>
       match args with
@@ -140,6 +148,14 @@ partial def emitPy (code : SExpr) (cfg : EmitConfig := {}) : String :=
           s!"~{emit (SExpr.list [SExpr.sym "paren*", SExpr.sym "~", arg])}"
         else
           s!"(~{emit arg})"
+      | _ => ""
+    | "fstring" =>
+      match args with
+      | [SExpr.str s] => s!"f\"{s}\""
+      | _ => ""
+    | "fstring3" =>
+      match args with
+      | [SExpr.str s] => s!"f\"\"\"{s}\"\"\""
       | _ => ""
     | "string" => parseExplicitString args cfg
     | "raw" =>
@@ -168,17 +184,17 @@ partial def emitPy (code : SExpr) (cfg : EmitConfig := {}) : String :=
       | _ => ""
     | "+" | "*" | "@" | "==" | "<<" | "!=" | "<" | ">" | "<=" | ">=" | ">>"
     | "&" | "logand" | "logxor" | "|" | "^" | "logior" | "and" | "or" | "//" | "%" | "**" =>
-      emitInfixOperator name args cfg emit
+      emitInfixOperator name args cfg emitWithDl
     | "-" =>
       if args.length == 1 then
         s!"-{emit (SExpr.list [SExpr.sym "paren*", SExpr.sym "-", args.head!])}"
       else
-        emitInfixOperator "-" args cfg emit
+        emitInfixOperator "-" args cfg emitWithDl
     | "/" =>
       if args.length == 1 then
         s!"1.0 / {emit (SExpr.list [SExpr.sym "paren*", SExpr.sym "/", args.head!])}"
       else
-        emitInfixOperator "/" args cfg emit
+        emitInfixOperator "/" args cfg emitWithDl
     | "comment" =>
       match args with
       | [SExpr.str c] => s!"# {c}\n"
@@ -221,17 +237,17 @@ partial def emitPy (code : SExpr) (cfg : EmitConfig := {}) : String :=
         s!"if {emit condExpr}:\n{emit (SExpr.list [SExpr.sym "body", trueStmt])}\n{elseIndent}:\n{emit (SExpr.list [SExpr.sym "body", falseStmt])}"
       | _ => ""
     | "cond" =>
-      let clauses := args.enum.map (fun (i, clause) =>
+      let clauses := args.zipIdx.map (fun (clause, i) =>
         match clause with
         | SExpr.list (c :: stmts) =>
-          let prefix :=
+          let prefixStr :=
             if i == 0 then
               if c == SExpr.sym "t" then "if True" else s!"if {emit c}"
             else if c == SExpr.sym "t" then
               emit (SExpr.list [SExpr.sym "indent", SExpr.list [SExpr.sym "raw", SExpr.str "else"]])
             else
               emit (SExpr.list [SExpr.sym "indent", SExpr.list [SExpr.sym "raw", SExpr.str s!"elif {emit c}"]])
-          s!"{prefix}:\n{emit (SExpr.list (SExpr.sym "body" :: stmts))}"
+          s!"{prefixStr}:\n{emit (SExpr.list (SExpr.sym "body" :: stmts))}"
         | _ => ""
       )
       String.intercalate "\n" clauses
@@ -346,7 +362,7 @@ partial def emitInfixOperator (op : String) (args : List SExpr) (cfg : EmitConfi
     | _ => s!" {op} "
 
   if cfg.omitRedundantParens then
-    let rendered := args.enum.map (fun (i, x) =>
+    let rendered := args.zipIdx.map (fun (x, i) =>
       let side := if i == 0 then Assoc.left else Assoc.right
       emit (SExpr.list [SExpr.sym "paren*", SExpr.sym op, x]) 0
     )
@@ -355,30 +371,39 @@ partial def emitInfixOperator (op : String) (args : List SExpr) (cfg : EmitConfi
     let rendered := args.map (fun x => s!"({emit x 0})")
     s!"({String.intercalate sep rendered})"
 
-partial def parseAndEmitFString (str : String) (cfg : EmitConfig) : String :=
+partial def parseAndEmitFString (str : String) (_cfg : EmitConfig) : String :=
   if str.contains '{' then
     s!"f\"{str}\""
   else
     s!"\"{str}\""
 
 partial def parseExplicitString (args : List SExpr) (cfg : EmitConfig) : String :=
-  let rec parseFlags (rest : List SExpr) (raw bytes triple forceF : Bool) : String :=
+  let rec loop (rest : List SExpr) (raw bytes triple forceF : Bool) : String :=
     match rest with
-    | SExpr.key "raw" :: xs => parseFlags xs true bytes triple forceF
-    | SExpr.key "bytes" :: xs => parseFlags xs raw true triple forceF
-    | SExpr.key "triple" :: xs => parseFlags xs raw bytes true forceF
-    | SExpr.key "f" :: xs => parseFlags xs raw bytes triple true
-    | actualArgs =>
-      let prefix := (if bytes then "b" else "") ++ (if raw then "r" else "") ++ (if forceF then "f" else "")
+    | e :: xs =>
+      let matchesKey (target : String) : Bool :=
+        match e with
+        | SExpr.key k => k == target
+        | SExpr.sym s => s == target || s == s!":{target}"
+        | _ => false
+      if matchesKey "raw" then loop xs true bytes triple forceF
+      else if matchesKey "bytes" then loop xs raw true triple forceF
+      else if matchesKey "triple" then loop xs raw bytes true forceF
+      else if matchesKey "f" then loop xs raw bytes triple true
+      else
+        let prefixStr := (if bytes then "b" else "") ++ (if raw then "r" else "") ++ (if forceF then "f" else "")
+        let quoteStr := if triple then "\"\"\"" else "\""
+        let body := String.join ((e :: xs).map (fun a =>
+          match a with
+          | SExpr.str s => s
+          | _ => s!"\{{emitPy a cfg}}"
+        ))
+        s!"{prefixStr}{quoteStr}{body}{quoteStr}"
+    | [] =>
+      let prefixStr := (if bytes then "b" else "") ++ (if raw then "r" else "") ++ (if forceF then "f" else "")
       let quoteStr := if triple then "\"\"\"" else "\""
-      let body := String.join (actualArgs.map (fun a =>
-        match a with
-        | SExpr.str s => s
-        | _ => s!"\{{emitPy a cfg}}"
-      ))
-      s!"{prefix}{quoteStr}{body}{quoteStr}"
-  parseFlags args false false false false
-
+      s!"{prefixStr}{quoteStr}{quoteStr}"
+  loop args false false false false
 end
 
 end PyGenerator
