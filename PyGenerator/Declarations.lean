@@ -58,40 +58,42 @@ structure ParsedLambda where
   auxParam  : List (String × Option SExpr) := []
 deriving Inhabited
 
+mutual
+partial def parseReq (args : List SExpr) (acc : ParsedLambda) : ParsedLambda :=
+  match args with
+  | [] => acc
+  | SExpr.sym "&optional" :: rest => parseOpt rest acc
+  | SExpr.sym "&rest" :: SExpr.sym r :: rest => parseRest rest { acc with resParam := some r }
+  | SExpr.sym "&key" :: rest => parseKey rest acc
+  | SExpr.sym name :: rest => parseReq rest { acc with reqParam := acc.reqParam ++ [name] }
+  | _ :: rest => parseReq rest acc
+
+partial def parseOpt (args : List SExpr) (acc : ParsedLambda) : ParsedLambda :=
+  match args with
+  | [] => acc
+  | SExpr.sym "&rest" :: SExpr.sym r :: rest => parseRest rest { acc with resParam := some r }
+  | SExpr.sym "&key" :: rest => parseKey rest acc
+  | SExpr.sym name :: rest => parseOpt rest { acc with optParam := acc.optParam ++ [(name, none)] }
+  | SExpr.list [SExpr.sym name, init] :: rest => parseOpt rest { acc with optParam := acc.optParam ++ [(name, some init)] }
+  | _ :: rest => parseOpt rest acc
+
+partial def parseRest (args : List SExpr) (acc : ParsedLambda) : ParsedLambda :=
+  match args with
+  | SExpr.sym "&key" :: rest => parseKey rest acc
+  | _ :: rest => parseRest rest acc
+  | [] => acc
+
+partial def parseKey (args : List SExpr) (acc : ParsedLambda) : ParsedLambda :=
+  match args with
+  | [] => acc
+  | SExpr.sym name :: rest => parseKey rest { acc with keyParam := acc.keyParam ++ [(name, SExpr.sym "None")] }
+  | SExpr.list [SExpr.sym name, init] :: rest => parseKey rest { acc with keyParam := acc.keyParam ++ [(name, init)] }
+  | SExpr.list [SExpr.list [SExpr.sym _, SExpr.sym name], init] :: rest => parseKey rest { acc with keyParam := acc.keyParam ++ [(name, init)] }
+  | _ :: rest => parseKey rest acc
+end
+
 /-- Parse Common Lisp ordinary lambda list -/
 def parseOrdinaryLambdaList (lambdaList : List SExpr) : ParsedLambda :=
-  let rec parseReq (args : List SExpr) (acc : ParsedLambda) : ParsedLambda :=
-    match args with
-    | [] => acc
-    | SExpr.sym "&optional" :: rest => parseOpt rest acc
-    | SExpr.sym "&rest" :: SExpr.sym r :: rest => parseRest rest { acc with resParam := some r }
-    | SExpr.sym "&key" :: rest => parseKey rest acc
-    | SExpr.sym name :: rest => parseReq rest { acc with reqParam := acc.reqParam ++ [name] }
-    | _ :: rest => parseReq rest acc
-
-  and parseOpt (args : List SExpr) (acc : ParsedLambda) : ParsedLambda :=
-    match args with
-    | [] => acc
-    | SExpr.sym "&rest" :: SExpr.sym r :: rest => parseRest rest { acc with resParam := some r }
-    | SExpr.sym "&key" :: rest => parseKey rest acc
-    | SExpr.sym name :: rest => parseOpt rest { acc with optParam := acc.optParam ++ [(name, none)] }
-    | SExpr.list [SExpr.sym name, init] :: rest => parseOpt rest { acc with optParam := acc.optParam ++ [(name, some init)] }
-    | _ :: rest => parseOpt rest acc
-
-  and parseRest (args : List SExpr) (acc : ParsedLambda) : ParsedLambda :=
-    match args with
-    | SExpr.sym "&key" :: rest => parseKey rest acc
-    | _ :: rest => parseRest rest acc
-    | [] => acc
-
-  and parseKey (args : List SExpr) (acc : ParsedLambda) : ParsedLambda :=
-    match args with
-    | [] => acc
-    | SExpr.sym name :: rest => parseKey rest { acc with keyParam := acc.keyParam ++ [(name, SExpr.sym "None")] }
-    | SExpr.list [SExpr.sym name, init] :: rest => parseKey rest { acc with keyParam := acc.keyParam ++ [(name, init)] }
-    | SExpr.list [SExpr.list [SExpr.sym _, SExpr.sym name], init] :: rest => parseKey rest { acc with keyParam := acc.keyParam ++ [(name, init)] }
-    | _ :: rest => parseKey rest acc
-
   parseReq lambdaList {}
 
 end PyGenerator

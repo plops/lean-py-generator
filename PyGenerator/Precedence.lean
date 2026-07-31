@@ -39,13 +39,12 @@ def lookupAssociativity (op : String) : Assoc :=
   | none => .left
 
 def allOperators : List String :=
-  precedenceTable.bind (·.ops)
+  precedenceTable.flatMap (·.ops)
 
 /-- Theorem: Unrecognized operators default deterministically to left associativity -/
 theorem lookupAssociativity_default (op : String) (h : precedenceTable.find? (fun spec => spec.ops.contains op) = none) :
     lookupAssociativity op = Assoc.left := by
   unfold lookupAssociativity
   rw [h]
-  rfl
 
 end PyGenerator

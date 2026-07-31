@@ -6,7 +6,7 @@ open Lean
 namespace PyGenerator
 
 /-- Write source code to file and execute ruff code formatter if available -/
-def writeSource (name : String) (code : SExpr) (dir : Option String := none) (ignoreHash : Bool := false) : IO Unit := do
+def writeSource (name : String) (code : SExpr) (dir : Option String := none) (_ignoreHash : Bool := false) : IO Unit := do
   let targetDir := dir.getD "."
   let filePath := if name.endsWith ".py" then s!"{targetDir}/{name}" else s!"{targetDir}/{name}.py"
   let codeStr := emitPy code { level := 0 }
@@ -25,7 +25,7 @@ def writeSource (name : String) (code : SExpr) (dir : Option String := none) (ig
 /-- Jupyter Notebook Cell Data -/
 structure NotebookCell where
   cell_type : String
-  metadata : Json := Json.obj []
+  metadata : Json := Json.mkObj []
   execution_count : Option Nat := none
   outputs : List Json := []
   source : List String
@@ -39,32 +39,32 @@ def writeNotebook (nbFile : String) (nbCode : List SExpr) : IO Unit := do
     match cellExpr with
     | SExpr.list (SExpr.sym "markdown" :: lines) =>
       let sourceLines := lines.map (fun p => match p with | SExpr.str s => s!"{s}\n" | _ => "")
-      some <| toJson ({ cell_type := "markdown", source := sourceLines } : NotebookCell)
+      some <| toJson ({ cell_type := "markdown", metadata := Json.mkObj [], source := sourceLines } : NotebookCell)
     | SExpr.list (SExpr.sym "python" :: codeForms) =>
       let sourceLines := codeForms.map (fun form => emitPy form ++ "\n")
-      some <| toJson ({ cell_type := "code", execution_count := none, outputs := [], source := sourceLines } : NotebookCell)
+      some <| toJson ({ cell_type := "code", metadata := Json.mkObj [], execution_count := none, outputs := [], source := sourceLines } : NotebookCell)
     | _ => none
   )
 
-  let notebookJson := Json.obj [
+  let notebookJson := Json.mkObj [
     ("cells", Json.arr cells.toArray),
-    ("metadata", Json.obj [
-      ("kernelspec", Json.obj [
-        ("display_name", "Python 3"),
-        ("language", "python"),
-        ("name", "python3")
+    ("metadata", Json.mkObj [
+      ("kernelspec", Json.mkObj [
+        ("display_name", Json.str "Python 3"),
+        ("language", Json.str "python"),
+        ("name", Json.str "python3")
       ])
     ]),
-    ("nbformat", 4),
-    ("nbformat_minor", 2)
+    ("nbformat", Json.num 4),
+    ("nbformat_minor", Json.num 2)
   ]
 
   IO.FS.writeFile tmpFile notebookJson.pretty
 
   let jqPath := "/usr/bin/jq"
   if ← System.FilePath.pathExists jqPath then
-    let out ← IO.Process.run { cmd := jqPath, args := #["-M", ".", tmpFile], stdout := .piped }
-    IO.FS.writeFile nbFile out.stdout
+    let outStdout ← IO.Process.run { cmd := jqPath, args := #["-M", ".", tmpFile] }
+    IO.FS.writeFile nbFile outStdout
   else
     IO.FS.writeFile nbFile notebookJson.pretty
 
