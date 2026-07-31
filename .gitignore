@@ -1,1 +1,17 @@
+# Lake build artifacts
 .lake/
+
+# Python / Ruff caches
+.ruff_cache/
+__pycache__/
+
+# Backup and temporary files
+*~
+*.tmp
+*.bak
+*.swp
+.DS_Store
+
+# Generated sample outputs
+output_sample.py
+output_sample.ipynb
